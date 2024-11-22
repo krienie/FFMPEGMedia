@@ -60,7 +60,7 @@ public:
 		Channels = InChannels;
 		Duration = InDuration;
 		SampleRate = InSampleRate;
-		Time = InTime;
+		Time = FMediaTimeStamp(InTime);
 
 		return true;
 	}

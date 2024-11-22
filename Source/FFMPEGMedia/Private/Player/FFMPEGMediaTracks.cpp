@@ -32,6 +32,7 @@ extern  "C" {
 #include "libavutil/imgutils.h"
 #include "libavutil/hwcontext.h"
 #include "libavutil/time.h"
+#include "libavutil/cpu.h"
 #include "libswscale/swscale.h"
 #include "libswresample/swresample.h"
 
@@ -451,7 +452,7 @@ void FFFMPEGMediaTracks::TickInput(FTimespan DeltaTime, FTimespan Timecode) {
     TargetTime = Timecode;
 
     double time = Timecode.GetTotalSeconds();
-    UE_LOG(LogFFMPEGMedia, Verbose, TEXT("Tracks: %p: TimeCode %.3f"), this, (float)time);
+    //UE_LOG(LogFFMPEGMedia, Verbose, TEXT("Tracks: %p: TimeCode %.3f"), this, (float)time);
 }
 
 
@@ -614,7 +615,7 @@ bool FFFMPEGMediaTracks::GetAudioTrackFormat(int32 TrackIndex, int32 FormatIndex
 	}
 
 	OutFormat.BitsPerSample = Format->Audio.FrameSize*8;
-	OutFormat.NumChannels = Format->Audio.NumChannels;
+	OutFormat.NumChannels = Format->Audio.ChannelLayout.nb_channels;
 	OutFormat.SampleRate = Format->Audio.SampleRate;
 	OutFormat.TypeName = Format->TypeName;
 
@@ -1117,12 +1118,13 @@ bool FFFMPEGMediaTracks::SetRate(float Rate) {
 
 
     if (bPrerolled) {
-        if (FMath::IsNearlyZero(Rate))
-        {
-            CurrentState = EMediaState::Paused;
-            DeferredEvents.Enqueue(EMediaEvent::PlaybackSuspended);
-        }
-        else
+        //TODO(KL): For some reason Pausing and Playing always gives a Rate of 0.. Disable pausing for now.
+        //if (FMath::IsNearlyZero(Rate))
+        //{
+        //    CurrentState = EMediaState::Paused;
+        //    DeferredEvents.Enqueue(EMediaEvent::PlaybackSuspended);
+        //}
+        //else
         {
             CurrentState = EMediaState::Playing;
             DeferredEvents.Enqueue(EMediaEvent::PlaybackResumed);
@@ -1146,7 +1148,7 @@ bool FFFMPEGMediaTracks::AddStreamToTracks(uint32 StreamIndex, bool IsVideoDevic
     AVMediaType MediaType = CodecParams->codec_type;
     
     if ( MediaType != AVMEDIA_TYPE_VIDEO && MediaType != AVMEDIA_TYPE_AUDIO && MediaType != AVMEDIA_TYPE_SUBTITLE) {
-        UE_LOG(LogFFMPEGMedia, Verbose, TEXT("Tracks %p: Unsupported major type %s of stream %i"), this,av_get_media_type_string(MediaType), StreamIndex);
+        UE_LOG(LogFFMPEGMedia, Verbose, TEXT("Tracks %p: Unsupported major type %s of stream %i"), this, *FString(av_get_media_type_string(MediaType)), StreamIndex);
         OutInfo += TEXT("\tUnsupported stream type\n");
 
         return false;
@@ -1203,23 +1205,23 @@ bool FFFMPEGMediaTracks::AddStreamToTracks(uint32 StreamIndex, bool IsVideoDevic
     {
         int samples = FFMAX(AUDIO_MIN_BUFFER_SIZE, 2 << av_log2(CodecParams->sample_rate / AUDIO_MAX_CALLBACKS_PER_SEC));
 
-        Track->Format = { 
+        Track->Format = FFormat{ 
             MediaType,
             CodecParams->codec_id,
             TypeName, 
-            {
-                (uint32)av_samples_get_buffer_size(NULL, CodecParams->channels, 1, AV_SAMPLE_FMT_S16, 1),
-                (uint32)CodecParams->channels,
+            FFormat::AudioFormat{
+                (uint32)av_samples_get_buffer_size(NULL, CodecParams->ch_layout.nb_channels, 1, AV_SAMPLE_FMT_S16, 1),
                 (uint32)CodecParams->sample_rate,
-                CodecParams->channel_layout,
+                //TODO(KL): Double check this
+                CodecParams->ch_layout,
                 AV_SAMPLE_FMT_S16,
-                (uint32)av_samples_get_buffer_size(NULL, CodecParams->channels, CodecParams->sample_rate,  AV_SAMPLE_FMT_S16, 1),
-                (uint32)av_samples_get_buffer_size(NULL, CodecParams->channels, samples, AV_SAMPLE_FMT_S16, 1)
+                (uint32)av_samples_get_buffer_size(NULL, CodecParams->ch_layout.nb_channels, CodecParams->sample_rate,  AV_SAMPLE_FMT_S16, 1),
+                (uint32)av_samples_get_buffer_size(NULL, CodecParams->ch_layout.nb_channels, samples, AV_SAMPLE_FMT_S16, 1)
             }, 
             {0} 
         };
 
-        OutInfo += FString::Printf(TEXT("\t\tChannels: %i\n"), Track->Format.Audio.NumChannels);
+        OutInfo += FString::Printf(TEXT("\t\tChannels: %i\n"), Track->Format.Audio.ChannelLayout.nb_channels);
         OutInfo += FString::Printf(TEXT("\t\tSample Rate: %i Hz\n"),  Track->Format.Audio.SampleRate);
         OutInfo += FString::Printf(TEXT("\t\tBits Per Sample: %i\n"),  Track->Format.Audio.FrameSize * 8);
 
@@ -1618,7 +1620,6 @@ int FFFMPEGMediaTracks::StreamComponentOpen(int stream_index) {
 
                         avctx->opaque = this;
                         avctx->get_format = GetFormatCallback;
-                        avctx->thread_safe_callbacks = 1;
 
                         break;
                     }
@@ -1710,7 +1711,8 @@ int FFFMPEGMediaTracks::StreamComponentOpen(int stream_index) {
         audioStream = FormatContext->streams[stream_index];
         audioStreamIdx = stream_index;
         auddec->Init(avctx, &audioq, &continueReadCond);
-        if ((FormatContext->iformat->flags & (AVFMT_NOBINSEARCH | AVFMT_NOGENSEARCH | AVFMT_NO_BYTE_SEEK)) && !FormatContext->iformat->read_seek) {
+        //TODO(KL): Double check read_seek
+        if ((FormatContext->iformat->flags & (AVFMT_NOBINSEARCH | AVFMT_NOGENSEARCH | AVFMT_NO_BYTE_SEEK))/* && !FormatContext->iformat->read_seek*/) {
             auddec->SetTime(audioStream->start_time, audioStream->time_base);
         }
         if ((ret = auddec->Start([this](void * data) {return AudioThread();}, NULL)) < 0) {
@@ -2072,12 +2074,12 @@ int FFFMPEGMediaTracks::ReadThread() {
         if (aborted)
             break;
 
-        if (currentStreams < totalStreams) {
-            wait_mutex.Lock();
-            continueReadCond.waitTimeout(wait_mutex, 10);
-            wait_mutex.Unlock();
-            continue;
-        }
+        //if (currentStreams < totalStreams) {
+        //    wait_mutex.Lock();
+        //    continueReadCond.waitTimeout(wait_mutex, 10);
+        //    wait_mutex.Unlock();
+        //    continue;
+        //}
 
         paused = ( CurrentState == EMediaState::Paused || CurrentState == EMediaState::Stopped);
 
@@ -2130,7 +2132,6 @@ int FFFMPEGMediaTracks::ReadThread() {
             if (CurrentState == EMediaState::Paused)
                 StepToNextFrame();
         }
-
 
         if (queueAttachmentsReq) {
             if (videoStream && videoStream->disposition & AV_DISPOSITION_ATTACHED_PIC) {
@@ -2342,7 +2343,6 @@ int FFFMPEGMediaTracks::SynchronizeAudio( int nb_samples) {
 
 int FFFMPEGMediaTracks::AudioDecodeFrame(FTimespan& time, FTimespan& duration) {
     int data_size, resampled_data_size;
-    int64_t dec_channel_layout;
     av_unused double audio_clock0;
     int wanted_nb_samples;
     FFMPEGFrame *af;
@@ -2364,11 +2364,12 @@ int FFFMPEGMediaTracks::AudioDecodeFrame(FTimespan& time, FTimespan& duration) {
         sampq.Next();
     } while (af->GetSerial() != audioq.GetSerial());
 
-    data_size = av_samples_get_buffer_size(NULL, af->GetFrame()->channels, af->GetFrame()->nb_samples, (AVSampleFormat)af->GetFrame()->format, 1);
+    data_size = av_samples_get_buffer_size(NULL, af->GetFrame()->ch_layout.nb_channels, af->GetFrame()->nb_samples, (AVSampleFormat)af->GetFrame()->format, 1);
 
-    dec_channel_layout =
-        (af->GetFrame()->channel_layout && af->GetFrame()->channels == av_get_channel_layout_nb_channels(af->GetFrame()->channel_layout)) ?
-        af->GetFrame()->channel_layout : av_get_default_channel_layout(af->GetFrame()->channels);
+    //TODO(KL): double check this
+    AVChannelLayout dec_channel_layout =af->GetFrame()->ch_layout;
+        //af->GetFrame()->channels == av_get_channel_layout_nb_channels(af->GetFrame()->channel_layout) ?
+        //af->GetFrame()->channel_layout : av_get_default_channel_layout(af->GetFrame()->channels);
     wanted_nb_samples = SynchronizeAudio(af->GetFrame()->nb_samples);
 
     if (getMasterSyncType() == ESynchronizationType::AudioMaster) {
@@ -2377,24 +2378,24 @@ int FFFMPEGMediaTracks::AudioDecodeFrame(FTimespan& time, FTimespan& duration) {
     }
 
     if (af->GetFrame()->format != srcAudio.Format ||
-        dec_channel_layout != srcAudio.ChannelLayout ||
+        dec_channel_layout.order != srcAudio.ChannelLayout.order ||
+        dec_channel_layout.nb_channels != srcAudio.ChannelLayout.nb_channels ||
         af->GetFrame()->sample_rate != srcAudio.SampleRate||
         (wanted_nb_samples != af->GetFrame()->nb_samples && !swrContext)) {
         swr_free(&swrContext);
-        swrContext = swr_alloc_set_opts(NULL,
-            targetAudio.ChannelLayout, targetAudio.Format,targetAudio.SampleRate,
-            dec_channel_layout, (AVSampleFormat)af->GetFrame()->format, af->GetFrame()->sample_rate,
+        swr_alloc_set_opts2(&swrContext,
+            &targetAudio.ChannelLayout, targetAudio.Format,targetAudio.SampleRate,
+            &dec_channel_layout, (AVSampleFormat)af->GetFrame()->format, af->GetFrame()->sample_rate,
             0, NULL);
         if (!swrContext || swr_init(swrContext) < 0) {
             UE_LOG(LogFFMPEGMedia, Error, 
                 TEXT("Cannot create sample rate converter for conversion of %d Hz %s %d channels to %d Hz %s %d channels!"),
-                af->GetFrame()->sample_rate, UTF8_TO_TCHAR( av_get_sample_fmt_name((AVSampleFormat)af->GetFrame()->format)), af->GetFrame()->channels,
-                targetAudio.SampleRate,  UTF8_TO_TCHAR(av_get_sample_fmt_name(targetAudio.Format)), targetAudio.NumChannels);
+                af->GetFrame()->sample_rate, *FString( av_get_sample_fmt_name((AVSampleFormat)af->GetFrame()->format)), af->GetFrame()->ch_layout.nb_channels,
+                targetAudio.SampleRate,  *FString(av_get_sample_fmt_name(targetAudio.Format)), targetAudio.ChannelLayout.nb_channels);
             swr_free(&swrContext);
             return -1;
         }
         srcAudio.ChannelLayout = dec_channel_layout;
-        srcAudio.NumChannels = af->GetFrame()->channels;
         srcAudio.SampleRate = af->GetFrame()->sample_rate;
         srcAudio.Format = (AVSampleFormat)af->GetFrame()->format;
     }
@@ -2403,7 +2404,7 @@ int FFFMPEGMediaTracks::AudioDecodeFrame(FTimespan& time, FTimespan& duration) {
         const uint8_t **in = (const uint8_t **)af->GetFrame()->extended_data;
         uint8_t **out = &audioBuf1;
         int out_count = (int64_t)wanted_nb_samples * targetAudio.SampleRate / af->GetFrame()->sample_rate + 256;
-        int out_size = av_samples_get_buffer_size(NULL, targetAudio.NumChannels, out_count,targetAudio.Format, 0);
+        int out_size = av_samples_get_buffer_size(NULL, targetAudio.ChannelLayout.nb_channels, out_count,targetAudio.Format, 0);
         int len2;
         if (out_size < 0) {
             UE_LOG(LogFFMPEGMedia, Error,  TEXT("av_samples_get_buffer_size() failed"));
@@ -2430,7 +2431,7 @@ int FFFMPEGMediaTracks::AudioDecodeFrame(FTimespan& time, FTimespan& duration) {
                 swr_free(&swrContext);
         }
         audioBuf = audioBuf1;
-        resampled_data_size = len2 * targetAudio.NumChannels * av_get_bytes_per_sample(targetAudio.Format);
+        resampled_data_size = len2 * targetAudio.ChannelLayout.nb_channels * av_get_bytes_per_sample(targetAudio.Format);
     }
     else {
         audioBuf = af->GetFrame()->data[0];
@@ -2478,7 +2479,7 @@ void FFFMPEGMediaTracks::RenderAudio() {
             FScopeLock Lock(&CriticalSection);
             const TSharedRef<FFFMPEGMediaAudioSample, ESPMode::ThreadSafe> AudioSample = AudioSamplePool->AcquireShared();
 
-            if (AudioSample->Initialize((uint8_t *)audioBuf, len1, targetAudio.NumChannels, targetAudio.SampleRate, time, duration))
+            if (AudioSample->Initialize((uint8_t *)audioBuf, len1, targetAudio.ChannelLayout.nb_channels, targetAudio.SampleRate, time, duration))
             {
                 AudioSampleQueue.Enqueue(AudioSample);
             }
@@ -2772,6 +2773,7 @@ int FFFMPEGMediaTracks::GetVideoFrame(AVFrame *frame) {
     return got_picture;
 }
 
+PRAGMA_DISABLE_UNREACHABLE_CODE_WARNINGS
 int FFFMPEGMediaTracks::VideoThread() {
 
     AVFrame *frame = av_frame_alloc();
@@ -2809,7 +2811,7 @@ int FFFMPEGMediaTracks::VideoThread() {
     av_frame_free(&frame);
     return 0;
 }
-
+PRAGMA_RESTORE_UNREACHABLE_CODE_WARNINGS
 
 int FFFMPEGMediaTracks::HWAccelRetrieveDataCallback(AVCodecContext *avctx, AVFrame *input) {
     FFFMPEGMediaTracks *ist = (FFFMPEGMediaTracks*)avctx->opaque;
@@ -2866,7 +2868,5 @@ int FFFMPEGMediaTracks::IsRealtime(AVFormatContext *s) {
 		return 1;
 	return 0;
 }
-
-
 
 #undef LOCTEXT_NAMESPACE

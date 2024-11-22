@@ -72,7 +72,7 @@ public:
 		Dim = InDim;
 		SampleFormat = EMediaTextureSampleFormat::CharBGRA;
 		Stride = InStride;
-		Time = InTime;
+		Time = FMediaTimeStamp(InTime);
 
 		return true;
 	}

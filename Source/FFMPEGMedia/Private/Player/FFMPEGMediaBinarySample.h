@@ -51,7 +51,7 @@ public:
 		Buffer.Append((uint8*)InBuffer, InSize);
 
 		Duration = InDuration;
-		Time = InTime;
+		Time = FMediaTimeStamp(InTime);
 
 		return true;
 	}

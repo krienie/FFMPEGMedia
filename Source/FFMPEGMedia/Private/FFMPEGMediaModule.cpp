@@ -18,6 +18,7 @@
 #endif
 
 extern  "C" {
+#include "libavcodec/version.h"
 #include "libavformat/avformat.h"
 
 #if PLATFORM_ANDROID
@@ -157,17 +158,27 @@ public:
 
 	virtual void StartupModule() override
 	{
+	    const TSharedPtr<IPlugin> FFmpegPlugin = IPluginManager::Get().FindPlugin("FFMPEGMedia");
+	    if (FFmpegPlugin.IsValid())
+	    {
+	    	const FString BinDir = FPaths::Combine(FFmpegPlugin->GetBaseDir(), "ThirdParty", "ffmpeg-7.1", "bin");
+	    	if (FPaths::DirectoryExists(BinDir))
+	    	{
+	    		FPlatformProcess::PushDllDirectory(*BinDir);
+	    	}
+	    }
+
 #if PLATFORM_ANDROID
         UE_LOG(LogFFMPEGMedia, Verbose, TEXT("Avoid load the libraries once again on android"));
 #else
-        AVUtilLibrary = LoadLibrary(TEXT("avutil"), TEXT("56"));
-        SWResampleLibrary = LoadLibrary(TEXT("swresample"), TEXT("3"));
-        AVCodecLibrary = LoadLibrary(TEXT("avcodec"), TEXT("58"));
-        AVFormatLibrary = LoadLibrary(TEXT("avformat"), TEXT("58"));
-        SWScaleLibrary = LoadLibrary(TEXT("swscale"), TEXT("5"));
-        PostProcLibrary = LoadLibrary(TEXT("postproc"), TEXT("55"));
-        AVFilterLibrary = LoadLibrary(TEXT("avfilter"), TEXT("7"));
-        AVDeviceLibrary = LoadLibrary(TEXT("avdevice"), TEXT("58"));
+        AVUtilLibrary = LoadLibrary(TEXT("avutil"), TEXT("59"));
+        SWResampleLibrary = LoadLibrary(TEXT("swresample"), TEXT("5"));
+        AVCodecLibrary = LoadLibrary(TEXT("avcodec"), TEXT("61"));
+        AVFormatLibrary = LoadLibrary(TEXT("avformat"), TEXT("61"));
+        SWScaleLibrary = LoadLibrary(TEXT("swscale"), TEXT("8"));
+        PostProcLibrary = LoadLibrary(TEXT("postproc"), TEXT("58"));
+        AVFilterLibrary = LoadLibrary(TEXT("avfilter"), TEXT("10"));
+        AVDeviceLibrary = LoadLibrary(TEXT("avdevice"), TEXT("61"));
 #endif
 
         #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 9, 100)
@@ -250,7 +261,7 @@ protected:
         FString prefix;
         FString separator;
 #if PLATFORM_MAC
-        LibDir = FPaths::Combine(*BaseDir, TEXT("ThirdParty/ffmpeg/lib/osx"));
+        LibDir = FPaths::Combine(*BaseDir, TEXT("ThirdParty/ffmpeg-7.1/lib/osx"));
         extension = TEXT(".dylib");
         prefix = "lib";
         separator = ".";
@@ -258,11 +269,7 @@ protected:
         extension = TEXT(".dll");
         prefix = "";
         separator = "-";
-#if PLATFORM_64BITS
-        LibDir = FPaths::Combine(*BaseDir, TEXT("ThirdParty/ffmpeg/bin/vs/x64"));
-#else
-        LibDir = FPaths::Combine(*BaseDir, TEXT("ThirdParty/ffmpeg/bin/vs/win32"));
-#endif
+        LibDir = FPaths::Combine(*BaseDir, TEXT("ThirdParty/ffmpeg-7.1/bin"));
 #endif
         if (!LibDir.IsEmpty()) {
             FString LibraryPath = FPaths::Combine(*LibDir, prefix + name + separator + version + extension);

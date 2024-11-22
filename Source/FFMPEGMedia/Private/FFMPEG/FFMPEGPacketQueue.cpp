@@ -198,6 +198,3 @@ bool FFMPEGPacketQueue::IsFlushPacket( void* data) {
     }
     return false;
 }
-
-
-

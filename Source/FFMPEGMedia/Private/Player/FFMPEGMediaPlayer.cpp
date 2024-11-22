@@ -378,7 +378,7 @@ AVFormatContext* FFFMPEGMediaPlayer::ReadContext(const TSharedPtr<FArchive, ESPM
         if (av_strerror(err, errbuf, sizeof(errbuf)) < 0)
             errbuf_ptr = strerror(AVUNERROR(err));
 #endif
-        PlayerTasks.Enqueue([=]() {
+        PlayerTasks.Enqueue([=, this]() {
             EventSink.ReceiveMediaEvent(EMediaEvent::MediaOpenFailed);
         });
 
@@ -397,7 +397,7 @@ AVFormatContext* FFFMPEGMediaPlayer::ReadContext(const TSharedPtr<FArchive, ESPM
     if (t) {
         UE_LOG(LogFFMPEGMedia, Error, TEXT("Option %s not found"), UTF8_TO_TCHAR(t->key));
         
-        PlayerTasks.Enqueue([=]() {
+        PlayerTasks.Enqueue([=, this]() {
             EventSink.ReceiveMediaEvent(EMediaEvent::MediaOpenFailed);
         });
         if ( FormatContext ) {

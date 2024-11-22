@@ -1,6 +1,5 @@
 #include "FFMPEGDecoder.h"
 
-
 FFMPEGDecoder::FFMPEGDecoder() {
     decoder_reorder_pts = -1;
     queue = NULL;
@@ -29,6 +28,7 @@ void FFMPEGDecoder::Init(AVCodecContext *_avctx, FFMPEGPacketQueue *_queue, Cond
     this->pkt_serial = -1;
 }
 
+PRAGMA_DISABLE_UNREACHABLE_CODE_WARNINGS
 int FFMPEGDecoder::DecodeFrame( AVFrame *frame, AVSubtitle *sub) {
     int ret = AVERROR(EAGAIN);
 
@@ -124,6 +124,7 @@ int FFMPEGDecoder::DecodeFrame( AVFrame *frame, AVSubtitle *sub) {
 
     return ret;
 }
+PRAGMA_RESTORE_UNREACHABLE_CODE_WARNINGS
 
 void FFMPEGDecoder::SetDecoderReorderPts ( int pts ) {
     decoder_reorder_pts = pts;

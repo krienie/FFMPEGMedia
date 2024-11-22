@@ -74,7 +74,7 @@ public:
 
 		Duration = (InDuration < FTimespan::Zero()) ? FTimespan::MaxValue() : InDuration;
 		Text = FText::FromString(StrippedText);
-		Time = InTime;
+		Time = FMediaTimeStamp(InTime);
         Position = InPosition;
 
 		return true;
